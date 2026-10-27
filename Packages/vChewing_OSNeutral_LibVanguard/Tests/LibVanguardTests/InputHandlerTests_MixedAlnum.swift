@@ -1113,6 +1113,37 @@ extension LibVanguardTestsRoot.InputHandlerTests {
     #expect(commissioned.contains("What?") || commissioned.contains("What？"))
   }
 
+  /// 中文混打時，大於／小於號應保留英文符號，即使事件只提供未按 Shift 的字元。
+  @Test("Personal mixed Shift angle brackets remain ASCII", arguments: [false, true], ["", "abc", "su", "su3"])
+  func test_PersonalMixedShiftAngleBrackets(_ halfWidth: Bool, _ prefix: String) throws {
+    for (keyCode, base, shifted) in [(UInt16(43), ",", "<"), (UInt16(47), ".", ">") ] {
+      for eventText in [base, shifted] {
+        let (handler, session) = try prepareMixedModeHandler()
+        handler.prefs.enableLatchedAlnumStateInMixedAlnumMode = false
+        handler.prefs.halfWidthPunctuationEnabled = halfWidth
+        defer { handler.currentLM.clearTemporaryData(isFiltering: false) }
+        let event = KBEvent.KeyEventData(
+          flags: .shift, chars: eventText, charsSansModifiers: base, keyCode: keyCode
+        ).asEvent
+        // 確保詞庫有標點命中，避免測試在未經中文標點分流時偶然通過。
+        for key in handler.punctuationQueryStrings(input: event) ?? [] {
+          handler.currentLM.insertTemporaryData(
+            unigram: .init(keyArray: [key], value: "〔標點攔截〕", score: 999),
+            isFiltering: false
+          )
+        }
+        typeSentence(prefix)
+        let expected = session.recentCommissions.joined()
+          + handler.committableDisplayText(sansReading: true)
+          + handler.mixedAlphanumericalBuffer + shifted
+        #expect(handler.triageInput(event: event))
+        #expect(handler.mixedAlphanumericalBuffer.hasSuffix(shifted))
+        #expect(handler.triageInput(event: KBEvent.KeyEventData.dataEnterReturn.asEvent))
+        #expect(session.recentCommissions.joined() == expected)
+      }
+    }
+  }
+
   // MARK: Group F — Phase 55 Leading Digit / Shift ASCII Block
 
   /// 純數字鍵在 mixed mode 下不得被 composer 吸收為注音聲調。

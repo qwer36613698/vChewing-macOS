@@ -1113,10 +1113,13 @@ extension LibVanguardTestsRoot.InputHandlerTests {
     #expect(commissioned.contains("What?") || commissioned.contains("What？"))
   }
 
-  /// 中文混打時，大於／小於號應保留英文符號，即使事件只提供未按 Shift 的字元。
-  @Test("Personal mixed Shift angle brackets remain ASCII", arguments: [false, true], ["", "abc", "su", "su3"])
+  /// 中文混打時，大於／小於號及大括號應保留英文符號，即使事件只提供未按 Shift 的字元。
+  @Test("Personal mixed Shift angle and curly brackets remain ASCII", arguments: [false, true], ["", "abc", "su", "su3"])
   func test_PersonalMixedShiftAngleBrackets(_ halfWidth: Bool, _ prefix: String) throws {
-    for (keyCode, base, shifted) in [(UInt16(43), ",", "<"), (UInt16(47), ".", ">") ] {
+    for (keyCode, base, shifted) in [
+      (UInt16(43), ",", "<"), (UInt16(47), ".", ">"),
+      (UInt16(33), "[", "{"), (UInt16(30), "]", "}"),
+    ] {
       for eventText in [base, shifted] {
         let (handler, session) = try prepareMixedModeHandler()
         handler.prefs.enableLatchedAlnumStateInMixedAlnumMode = false

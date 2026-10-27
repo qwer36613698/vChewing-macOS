@@ -1113,12 +1113,11 @@ extension LibVanguardTestsRoot.InputHandlerTests {
     #expect(commissioned.contains("What?") || commissioned.contains("What？"))
   }
 
-  /// 中文混打時，大於／小於號及大括號應保留英文符號，即使事件只提供未按 Shift 的字元。
-  @Test("Personal mixed Shift angle and curly brackets remain ASCII", arguments: [false, true], ["", "abc", "su", "su3"])
+  /// 中文混打時，大於／小於號應保留英文符號，即使事件只提供未按 Shift 的字元。
+  @Test("Personal mixed Shift angle brackets remain ASCII", arguments: [false, true], ["", "abc", "su", "su3"])
   func test_PersonalMixedShiftAngleBrackets(_ halfWidth: Bool, _ prefix: String) throws {
     for (keyCode, base, shifted) in [
       (UInt16(43), ",", "<"), (UInt16(47), ".", ">"),
-      (UInt16(33), "[", "{"), (UInt16(30), "]", "}"),
     ] {
       for eventText in [base, shifted] {
         let (handler, session) = try prepareMixedModeHandler()
@@ -1142,6 +1141,31 @@ extension LibVanguardTestsRoot.InputHandlerTests {
         #expect(handler.triageInput(event: event))
         #expect(handler.mixedAlphanumericalBuffer.hasSuffix(shifted))
         #expect(handler.triageInput(event: KBEvent.KeyEventData.dataEnterReturn.asEvent))
+        #expect(session.recentCommissions.joined() == expected)
+      }
+    }
+  }
+
+  /// 半形標點的中文混打模式：Shift+方括號明確輸出 U+FF62／U+FF63。
+  /// 使用原廠測試辭典，不注入標點替代值，確認實際遞交的字元。
+  @Test("Personal mixed Shift square keys commit half-width corner quotes", arguments: ["", "abc", "su", "su3"])
+  func test_PersonalMixedShiftCornerQuotes(_ prefix: String) throws {
+    for (keyCode, base, shifted, expectedQuote) in [
+      (UInt16(33), "[", "{", "｢"), (UInt16(30), "]", "}", "｣"),
+    ] {
+      for eventText in [base, shifted] {
+        let (handler, session) = try prepareMixedModeHandler()
+        handler.prefs.enableLatchedAlnumStateInMixedAlnumMode = false
+        handler.prefs.halfWidthPunctuationEnabled = true
+        typeSentence(prefix)
+        let expected = session.recentCommissions.joined()
+          + handler.committableDisplayText(sansReading: true)
+          + handler.mixedAlphanumericalBuffer + expectedQuote
+        let event = KBEvent.KeyEventData(
+          flags: .shift, chars: eventText, charsSansModifiers: base, keyCode: keyCode
+        ).asEvent
+        #expect(handler.triageInput(event: event))
+        _ = handler.triageInput(event: KBEvent.KeyEventData.dataEnterReturn.asEvent)
         #expect(session.recentCommissions.joined() == expected)
       }
     }

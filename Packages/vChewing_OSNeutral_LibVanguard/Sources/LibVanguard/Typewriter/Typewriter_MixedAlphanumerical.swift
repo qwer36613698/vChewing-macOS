@@ -279,6 +279,17 @@ public struct MixedAlphanumericalTypewriter<Handler: InputHandlerProtocol>: Type
     if let literalASCIIText = resolveLiteralASCIIMainAreaText(input) {
       return commitLiteralASCIIImmediately(literalASCIIText, session: session)
     }
+    // 個人版半形標點：Shift+方括號固定輸出半形角引號，避免詞庫候選順序改變字元。
+    if handler.prefs.halfWidthPunctuationEnabled,
+       input.commonKeyModifierFlags == [.shift],
+       let cornerQuote = ["{": "｢", "}": "｣"][resolveVisibleInputText(input)] {
+      let asciiText = handler.mixedAlphanumericalBuffer
+      handler.mixedAlphanumericalBuffer.removeAll()
+      let chineseText = handler.committableDisplayText(sansReading: true)
+      handler.composer.clear()
+      session.switchState(State.ofCommitting(textToCommit: chineseText + asciiText + cornerQuote))
+      return true
+    }
     let isPunctuationChar = !input.text.isEmpty
       && input.text.unicodeScalars.allSatisfy(isPunctCharOrSymbol)
     guard !(input.isReservedKey || input.isNumericPadKey || input.isNonLaptopFunctionKey)
@@ -327,13 +338,13 @@ public struct MixedAlphanumericalTypewriter<Handler: InputHandlerProtocol>: Type
     // 若當前鍵（含修飾鍵）在標點詞庫有可用項，
     // 視為 CJK 標點輸入，優先回到既有標點管線處理。
     // 但若目前鍵位本身就是合法注音鍵，則必須讓注音輸入優先。
-    // Shift+? 與個人版本的 Shift+逗號／句號／方括號保留 ASCII 語義，不回到 CJK 標點管線。
+    // Shift+? 與個人版本的 Shift+逗號／句號保留 ASCII 語義，不回到 CJK 標點管線。
     // 其餘 Shift 標點（例如 Shift+` 的 ~）仍需維持既有 CJK 標點查詢能力。
     let punctuationQueryStrings = handler.punctuationQueryStrings(input: input)
     let isShiftQuestionMark = input.isShiftHeld && ["?", "？"].contains(visibleInputText)
-    let isShiftCodeBracket = input.commonKeyModifierFlags == [.shift]
-      && ["<", ">", "{", "}"].contains(visibleInputText)
-    let matchesCJKPunctuation = !isShiftQuestionMark && !isShiftCodeBracket && isPunctuationChar
+    let isShiftAngleBracket = input.commonKeyModifierFlags == [.shift]
+      && ["<", ">"].contains(visibleInputText)
+    let matchesCJKPunctuation = !isShiftQuestionMark && !isShiftAngleBracket && isPunctuationChar
       && !isPhoneticKeyRaw && (punctuationQueryStrings?.contains {
         handler.currentLM.lxQuerier.hasUnigrams(for: [$0])
       } ?? false)

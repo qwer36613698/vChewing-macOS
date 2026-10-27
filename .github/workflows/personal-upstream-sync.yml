@@ -1,0 +1,125 @@
+name: Sync official releases into personal
+
+on:
+  schedule:
+    - cron: "23 2 * * *"
+  workflow_dispatch:
+
+permissions: {}
+
+concurrency:
+  group: personal-upstream-sync
+  cancel-in-progress: false
+
+jobs:
+  prepare:
+    if: github.repository == 'qwer36613698/vChewing-macOS'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+      pull-requests: write
+    outputs:
+      changed: ${{ steps.prepare.outputs.changed }}
+      sha: ${{ steps.prepare.outputs.sha }}
+      base: ${{ steps.prepare.outputs.base }}
+      pr: ${{ steps.prepare.outputs.pr }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: personal
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Prepare update PR
+        id: prepare
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          upstream=vChewing/vChewing-macOS
+          tag=$(gh api "repos/$upstream/releases/latest" --jq .tag_name)
+          [[ "$tag" =~ ^v?[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo "Unsupported release tag: $tag" >&2; exit 1; }
+          git remote add upstream "https://github.com/$upstream.git"
+          git fetch --no-tags upstream "refs/tags/$tag:refs/upstream-release/latest"
+          release_sha=$(git rev-parse 'refs/upstream-release/latest^{commit}')
+          base=$(git rev-parse HEAD)
+          if git merge-base --is-ancestor "$release_sha" HEAD; then
+            echo 'changed=false' >> "$GITHUB_OUTPUT"
+            echo "Official release $tag is already included." >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          branch="automation/upstream-$tag-${base:0:12}"
+          if git ls-remote --exit-code --heads origin "$branch" >/dev/null; then
+            git fetch origin "refs/heads/$branch"
+            git checkout --detach FETCH_HEAD
+            git merge-base --is-ancestor "$base" HEAD
+            git merge-base --is-ancestor "$release_sha" HEAD
+          else
+            if ! git merge --no-edit --no-ff "$release_sha"; then
+              git merge --abort
+              echo "Merge conflict with $tag. Personal branch was not changed." >> "$GITHUB_STEP_SUMMARY"
+              exit 1
+            fi
+            gh auth setup-git
+            git push origin "HEAD:refs/heads/$branch"
+          fi
+          sha=$(git rev-parse HEAD)
+          pr=$(gh pr list --base personal --head "$branch" --state open --json number --jq '.[0].number // empty')
+          if [[ -z "$pr" ]]; then
+            body_file=$(mktemp)
+            cat > "$body_file" <<EOF
+          Merge official release $tag into the personal input-method branch.
+
+          Candidate: $sha
+          Personal base: $base
+
+          The sync workflow explicitly runs Linux tests, macOS tests, and a universal app build before merging. A failed check or conflict leaves the personal branch unchanged. The artifact is locally signed and is installed manually.
+          EOF
+            gh pr create --base personal --head "$branch" --title "Update personal build to $tag" --body-file "$body_file"
+            pr=$(gh pr list --base personal --head "$branch" --state open --json number --jq '.[0].number')
+            rm "$body_file"
+          fi
+          {
+            echo 'changed=true'
+            echo "sha=$sha"
+            echo "base=$base"
+            echo "pr=$pr"
+          } >> "$GITHUB_OUTPUT"
+
+  validate:
+    needs: prepare
+    if: needs.prepare.outputs.changed == 'true'
+    permissions:
+      contents: read
+    uses: ./.github/workflows/personal-validation.yml
+    with:
+      ref: ${{ needs.prepare.outputs.sha }}
+
+  merge:
+    needs: [prepare, validate]
+    if: needs.prepare.outputs.changed == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: write
+      pull-requests: write
+    steps:
+      - name: Merge the tested candidate
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          EXPECTED_BASE: ${{ needs.prepare.outputs.base }}
+          TESTED_SHA: ${{ needs.prepare.outputs.sha }}
+          PR_NUMBER: ${{ needs.prepare.outputs.pr }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          actual_base=$(gh api "repos/$GH_REPO/git/ref/heads/personal" --jq .object.sha)
+          [[ "$actual_base" == "$EXPECTED_BASE" ]] || { echo 'Personal branch changed during validation. Rerun sync.' >&2; exit 1; }
+          # Never bypass required reviews or branch rules. Check the exact tested head.
+          gh pr merge "$PR_NUMBER" --merge --match-head-commit "$TESTED_SHA"
+          echo "Merged tested candidate $TESTED_SHA via PR #$PR_NUMBER." >> "$GITHUB_STEP_SUMMARY"

@@ -1,0 +1,79 @@
+name: Personal validation and macOS build
+
+on:
+  push:
+    branches: [personal]
+  pull_request:
+    branches: [personal]
+  workflow_dispatch:
+  workflow_call:
+    inputs:
+      ref:
+        description: Exact candidate commit to validate
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  tests:
+    name: LibVanguard regression tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref || github.sha }}
+          persist-credentials: false
+      - uses: swift-actions/setup-swift@v3
+        with:
+          swift-version: "6.4"
+      - name: Verify personal regression tests remain present
+        shell: bash
+        run: |
+          set -euo pipefail
+          test_file=Packages/vChewing_OSNeutral_LibVanguard/Tests/LibVanguardTests/InputHandlerTests_MixedAlnum.swift
+          grep -q 'func test_PersonalMixedShiftAngleBrackets' "$test_file"
+      - name: Run typing engine tests
+        run: swift test --package-path Packages/vChewing_OSNeutral_LibVanguard
+
+  macos:
+    name: macOS tests and universal app
+    needs: tests
+    runs-on: macos-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref || github.sha }}
+          persist-credentials: false
+      - uses: swift-actions/setup-swift@v3
+        with:
+          swift-version: "6.4"
+      - name: Record toolchain
+        run: |
+          swift --version
+          xcodebuild -version
+      - name: Run typing engine tests on macOS
+        run: swift test --package-path Packages/vChewing_OSNeutral_LibVanguard
+      - name: Build universal apps
+        run: make release
+      - name: Package locally signed installer app
+        shell: bash
+        run: |
+          set -euo pipefail
+          installer=Build/Products/Release/vChewingInstaller.app
+          test -d "$installer"
+          ditto -c -k --sequesterRsrc --keepParent "$installer" vChewing-personal-installer.zip
+          shasum -a 256 vChewing-personal-installer.zip > vChewing-personal-installer.zip.sha256
+          git rev-parse HEAD > source-commit.txt
+      - uses: actions/upload-artifact@v4
+        with:
+          name: vChewing-personal-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            vChewing-personal-installer.zip
+            vChewing-personal-installer.zip.sha256
+            source-commit.txt
+          if-no-files-found: error
+          retention-days: 30

@@ -1,6 +1,6 @@
 # 唯音個人版本
 
-這個分支從官方 4.9.2 建立。修改目的：在中文注音的「中英混合輸入回退」模式下，以 `Shift + .` 輸入 `>`、以 `Shift + ,` 輸入 `<`，沿用混打的組字／遞交方式。啟用「半形標點模式」時，`Shift + [` 固定輸出 `｢`（U+FF62）、`Shift + ]` 固定輸出 `｣`（U+FF63）；會先遞交已有的組字與英數內容，再遞交角引號，避免受到標點詞庫候選順序影響。
+這個分支從官方 4.9.2 建立。修改目的：在中文注音的「中英混合輸入回退」模式下，以 `Shift + .` 輸入 `>`、以 `Shift + ,` 輸入 `<`，沿用混打的組字／遞交方式。啟用「半形標點模式」時，`Shift + [`、`Shift + ]` 先在組字區顯示 ASCII `{`、`}`；立即按不帶修飾鍵的 Tab，才把尾端連續的大括號轉為 `｢`（U+FF62）、`｣`（U+FF63），並遞交整段內容。支援 `{` → Tab → `｢`、`}` → Tab → `｣`、`{}` → Tab → `｢｣`。直接按 Enter 則保留大括號。已遞交或已離開組字區的文字不屬於此轉換範圍；其他情境沿用既有 Tab 行為。
 
 修改僅適用於中英混打，未涵蓋關閉混打的純中文模式。候選視窗中既有的選字操作仍優先。ASCII 符號可能先顯示在組字區，按 Enter 遞交；不強制清空尚未完成的讀音。
 
@@ -23,9 +23,9 @@
 需要 Swift 6.4 以上與相容的 macOS SDK。Command Line Tools 若缺少 Foundation 巨集外掛，改用完整 Xcode 的工具鏈；不應為此修改引擎程式。
 
 ```sh
-swift test --package-path Packages/vChewing_OSNeutral_LibVanguard --filter test_PersonalMixedShiftAngleBrackets
+swift test --package-path Packages/vChewing_OSNeutral_LibVanguard --filter test_PersonalMixed
 swift test --package-path Packages/vChewing_OSNeutral_LibVanguard
 make release
 ```
 
-測試包含半形／全形標點設定、有無英文或未完成讀音、已組好的中文，以及僅提供基底字元的鍵盤事件。角引號測試直接使用原廠測試辭典並比對輸出字元。正式使用前仍應在 VS Code 實測中文混打模式輸入 `<`、`>`、`｢`、`｣`、Enter 遞交、候選選取及 `Command + /`。
+測試包含半形／全形標點設定、有無英文或未完成讀音、已組好的中文，以及僅提供基底字元的鍵盤事件。Tab 轉換測試直接使用原廠測試辭典，檢查轉換前顯示、Enter 保留大括號、Tab 單個／成對轉換，以及修飾鍵與模式守衛。正式使用前仍應在 VS Code 實測中文混打模式輸入 `<`、`>`、`｢`、`｣`、Enter 遞交、候選選取及 `Command + /`。

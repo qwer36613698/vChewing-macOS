@@ -347,6 +347,9 @@ extension InputHandlerProtocol {
         return compositionHandled
       }
 
+      // 個人版混打：Tab 轉換尾端大括號，優先於一般選字窗與候選輪替。
+      if MixedAlphanumericalTypewriter(self).commitTrailingCurlyBracketsOnTab(input) { return true }
+
       // 手動呼叫選字窗。
       if callCandidateState(input: input) { return true }
 

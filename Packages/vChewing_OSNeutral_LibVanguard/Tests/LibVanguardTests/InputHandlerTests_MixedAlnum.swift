@@ -1146,29 +1146,74 @@ extension LibVanguardTestsRoot.InputHandlerTests {
     }
   }
 
-  /// 半形標點的中文混打模式：Shift+方括號明確輸出 U+FF62／U+FF63。
-  /// 使用原廠測試辭典，不注入標點替代值，確認實際遞交的字元。
-  @Test("Personal mixed Shift square keys commit half-width corner quotes", arguments: ["", "abc", "su", "su3"])
+  /// 實際事件分診：Shift+方括號先保留 ASCII，Tab 才轉換且不插入定位字元。
+  @Test("Personal mixed curly brackets convert only on Tab", arguments: ["", "abc", "su", "su3"])
   func test_PersonalMixedShiftCornerQuotes(_ prefix: String) throws {
-    for (keyCode, base, shifted, expectedQuote) in [
-      (UInt16(33), "[", "{", "｢"), (UInt16(30), "]", "}", "｣"),
-    ] {
-      for eventText in [base, shifted] {
-        let (handler, session) = try prepareMixedModeHandler()
-        handler.prefs.enableLatchedAlnumStateInMixedAlnumMode = false
-        handler.prefs.halfWidthPunctuationEnabled = true
-        typeSentence(prefix)
-        let expected = session.recentCommissions.joined()
-          + handler.committableDisplayText(sansReading: true)
-          + handler.mixedAlphanumericalBuffer + expectedQuote
-        let event = KBEvent.KeyEventData(
-          flags: .shift, chars: eventText, charsSansModifiers: base, keyCode: keyCode
-        ).asEvent
-        #expect(handler.triageInput(event: event))
-        _ = handler.triageInput(event: KBEvent.KeyEventData.dataEnterReturn.asEvent)
-        #expect(session.recentCommissions.joined() == expected)
+    for symbols in ["{", "}", "{}", "{{}}"] {
+      for baseEvent in [false, true] {
+        for convert in [false, true] {
+          let (handler, session) = try prepareMixedModeHandler()
+          handler.prefs.enableLatchedAlnumStateInMixedAlnumMode = false
+          handler.prefs.halfWidthPunctuationEnabled = true
+          typeSentence(prefix)
+          let expectedPrefix = session.recentCommissions.joined()
+            + handler.committableDisplayText(sansReading: true)
+            + handler.mixedAlphanumericalBuffer
+          let commissionsBeforeSymbols = session.recentCommissions.joined()
+          for symbol in symbols {
+            let base = symbol == "{" ? "[" : "]"
+            let event = KBEvent.KeyEventData(
+              flags: .shift, chars: baseEvent ? base : String(symbol),
+              charsSansModifiers: base, keyCode: symbol == "{" ? 33 : 30
+            ).asEvent
+            #expect(handler.triageInput(event: event))
+          }
+          #expect(handler.mixedAlphanumericalBuffer.hasSuffix(symbols))
+          #expect(handler.generateStateOfInputting().displayedText.hasSuffix(symbols))
+          #expect(session.recentCommissions.joined() == commissionsBeforeSymbols)
+          let expectedSymbols = convert
+            ? symbols.replacingOccurrences(of: "{", with: "｢").replacingOccurrences(of: "}", with: "｣")
+            : symbols
+          if convert {
+            #expect(handler.triageInput(event: KBEvent.KeyEventData.dataTab.asEvent))
+            #expect(handler.mixedAlphanumericalBuffer.isEmpty)
+          } else {
+            #expect(handler.triageInput(event: KBEvent.KeyEventData.dataEnterReturn.asEvent))
+          }
+          #expect(session.recentCommissions.joined() == expectedPrefix + expectedSymbols)
+        }
       }
     }
+  }
+
+  @Test("Personal curly Tab conversion requires its exact context")
+  func test_PersonalMixedCurlyTabGuards() throws {
+    let (handler, session) = try prepareMixedModeHandler()
+    handler.prefs.enableLatchedAlnumStateInMixedAlnumMode = false
+    handler.prefs.halfWidthPunctuationEnabled = true
+    let typewriter = MixedAlphanumericalTypewriter(handler)
+    for flags: KBEvent.ModifierFlags in [.shift, .control, .option, .command] {
+      handler.mixedAlphanumericalBuffer = "{}"
+      let event = KBEvent.KeyEventData(flags: flags, chars: "\t", keyCode: 48).asEvent
+      #expect(!typewriter.commitTrailingCurlyBracketsOnTab(event))
+      #expect(handler.mixedAlphanumericalBuffer == "{}")
+    }
+    let tab = KBEvent.KeyEventData.dataTab.asEvent
+    for buffer in ["", "abc", "{}a", "{} ", "｢｣"] {
+      handler.mixedAlphanumericalBuffer = buffer
+      #expect(!typewriter.commitTrailingCurlyBracketsOnTab(tab))
+      #expect(handler.mixedAlphanumericalBuffer == buffer)
+    }
+    handler.mixedAlphanumericalBuffer = "{}"
+    handler.prefs.halfWidthPunctuationEnabled = false
+    #expect(!typewriter.commitTrailingCurlyBracketsOnTab(tab))
+    handler.prefs.halfWidthPunctuationEnabled = true
+    handler.prefs.mixedAlphanumericalEnabled = false
+    #expect(!typewriter.commitTrailingCurlyBracketsOnTab(tab))
+    handler.prefs.mixedAlphanumericalEnabled = true
+    handler.mixedAlnumConfig.isLatchedToAlnum = true
+    #expect(!typewriter.commitTrailingCurlyBracketsOnTab(tab))
+    #expect(session.recentCommissions.isEmpty)
   }
 
   // MARK: Group F — Phase 55 Leading Digit / Shift ASCII Block

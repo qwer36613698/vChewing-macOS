@@ -279,17 +279,6 @@ public struct MixedAlphanumericalTypewriter<Handler: InputHandlerProtocol>: Type
     if let literalASCIIText = resolveLiteralASCIIMainAreaText(input) {
       return commitLiteralASCIIImmediately(literalASCIIText, session: session)
     }
-    // 個人版半形標點：Shift+方括號固定輸出半形角引號，避免詞庫候選順序改變字元。
-    if handler.prefs.halfWidthPunctuationEnabled,
-       input.commonKeyModifierFlags == [.shift],
-       let cornerQuote = ["{": "｢", "}": "｣"][resolveVisibleInputText(input)] {
-      let asciiText = handler.mixedAlphanumericalBuffer
-      handler.mixedAlphanumericalBuffer.removeAll()
-      let chineseText = handler.committableDisplayText(sansReading: true)
-      handler.composer.clear()
-      session.switchState(State.ofCommitting(textToCommit: chineseText + asciiText + cornerQuote))
-      return true
-    }
     let isPunctuationChar = !input.text.isEmpty
       && input.text.unicodeScalars.allSatisfy(isPunctCharOrSymbol)
     guard !(input.isReservedKey || input.isNumericPadKey || input.isNonLaptopFunctionKey)
@@ -344,7 +333,10 @@ public struct MixedAlphanumericalTypewriter<Handler: InputHandlerProtocol>: Type
     let isShiftQuestionMark = input.isShiftHeld && ["?", "？"].contains(visibleInputText)
     let isShiftAngleBracket = input.commonKeyModifierFlags == [.shift]
       && ["<", ">"].contains(visibleInputText)
-    let matchesCJKPunctuation = !isShiftQuestionMark && !isShiftAngleBracket && isPunctuationChar
+    let isShiftCurlyBracket = handler.prefs.halfWidthPunctuationEnabled
+      && input.commonKeyModifierFlags == [.shift] && ["{", "}"].contains(visibleInputText)
+    let matchesCJKPunctuation = !isShiftQuestionMark && !isShiftAngleBracket
+      && !isShiftCurlyBracket && isPunctuationChar
       && !isPhoneticKeyRaw && (punctuationQueryStrings?.contains {
         handler.currentLM.lxQuerier.hasUnigrams(for: [$0])
       } ?? false)
@@ -980,6 +972,27 @@ public struct MixedAlphanumericalTypewriter<Handler: InputHandlerProtocol>: Type
     let afterOccupiedSlotCount = afterSlots.filter { !$0.isEmpty }.count
     guard beforeOccupiedSlotCount > 0 else { return false }
     return afterOccupiedSlotCount <= beforeOccupiedSlotCount
+  }
+
+  /// 個人版：尚未遞交的尾端大括號，僅以不帶修飾鍵的 Tab 轉為半形角引號。
+  /// 轉換並遞交整段內容；其餘 Tab 保留既有選字／客體應用行為。
+  public func commitTrailingCurlyBracketsOnTab(_ input: some InputSignalProtocol) -> Bool {
+    guard input.isTab, input.commonKeyModifierFlags.isEmpty,
+          handler.isMixedAlphanumericalLayerInEffect,
+          handler.prefs.halfWidthPunctuationEnabled,
+          !handler.mixedAlnumConfig.isLatchedToAlnum,
+          let session = handler.session
+    else { return false }
+    let buffer = handler.mixedAlphanumericalBuffer
+    let suffix = buffer.reversed().prefix { $0 == "{" || $0 == "}" }.reversed()
+    guard !suffix.isEmpty else { return false }
+    let converted = suffix.map { $0 == "{" ? "｢" : "｣" }.joined()
+    let asciiText = String(buffer.dropLast(suffix.count)) + converted
+    handler.mixedAlphanumericalBuffer.removeAll()
+    let chineseText = handler.committableDisplayText(sansReading: true)
+    handler.composer.clear()
+    session.switchState(State.ofCommitting(textToCommit: chineseText + asciiText))
+    return true
   }
 
   private func resolveVisibleInputText(_ input: some InputSignalProtocol) -> String {
